@@ -1,1 +1,157 @@
+-- AimAssist.lua (to host on GitHub)
+-- Raw URL: https://raw.githubusercontent.com/yourusername/yourrepo/main/AimAssist.lua
 
+return function(config)
+    -- Core AimAssist module
+    local AimAssist = {
+        Target = nil,
+        Active = false,
+        Connections = {}
+    }
+
+    -- Math optimizations
+    local clamp = math.clamp
+    local v3new = Vector3.new
+    local v2new = Vector2.new
+    local cfnew = CFrame.new
+    local ws = workspace
+    local plrs = game:GetService("Players")
+    local rs = game:GetService("RunService")
+    local uis = game:GetService("UserInputService")
+
+    -- Target acquisition
+    function AimAssist:GetClosestTarget()
+        local localPlayer = plrs.LocalPlayer
+        local camera = ws.CurrentCamera
+        local closestPlayer, closestDistance = nil, config.FOV
+        
+        for _, player in pairs(plrs:GetPlayers()) do
+            if player == localPlayer then continue end
+            
+            local character = player.Character
+            if not character then continue end
+            
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then continue end
+            
+            if config.TeamCheck and player.Team == localPlayer.Team then continue end
+            
+            local targetPart = character:FindFirstChild(config.AimPart)
+            if not targetPart then continue end
+            
+            local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+            if not onScreen then continue end
+            
+            local mousePos = uis:GetMouseLocation()
+            local distance = (v2new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+            
+            if distance < closestDistance then
+                if config.WallCheck then
+                    local raycastParams = RaycastParams.new()
+                    raycastParams.FilterDescendantsInstances = {localPlayer.Character, character}
+                    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+                    
+                    local rayResult = ws:Raycast(
+                        camera.CFrame.Position,
+                        (targetPart.Position - camera.CFrame.Position).Unit * config.MaxDistance,
+                        raycastParams
+                    )
+                    
+                    if rayResult and rayResult.Instance:IsDescendantOf(character) then
+                        closestPlayer = player
+                        closestDistance = distance
+                    end
+                else
+                    closestPlayer = player
+                    closestDistance = distance
+                end
+            end
+        end
+        
+        return closestPlayer
+    end
+
+    -- Prediction calculation
+    function AimAssist:CalculatePrediction(target)
+        if not target or not target.Character then return nil end
+        
+        local targetPart = target.Character:FindFirstChild(config.AimPart)
+        if not targetPart then return nil end
+        
+        local velocity = targetPart.Velocity
+        local isAirborne = not target.Character:FindFirstChild("Humanoid").FloorMaterial
+        
+        -- Base prediction
+        local prediction = velocity * config.Prediction
+        
+        -- Air shot adjustment
+        if isAirborne then
+            prediction = prediction * config.AirShotMultiplier
+        end
+        
+        -- Y-axis offset
+        return targetPart.Position + prediction + v3new(0, config.YOffset, 0)
+    end
+
+    -- Main update loop
+    function AimAssist:Update()
+        if not config.Enabled then return end
+        if config.HoldToActivate and not uis:IsKeyDown(config.ActivationKey) then return end
+        
+        -- Target acquisition
+        if not self.Target or config.UnlockOnDeath then
+            self.Target = self:GetClosestTarget()
+        end
+        
+        -- Apply aim assist
+        if self.Target and self.Target.Character then
+            local predictedPos = self:CalculatePrediction(self.Target)
+            if predictedPos then
+                local camera = ws.CurrentCamera
+                local targetCF = cfnew(camera.CFrame.Position, predictedPos)
+                
+                camera.CFrame = camera.CFrame:Lerp(
+                    targetCF,
+                    clamp(config.Smoothness, 0.01, 1),
+                    Enum.EasingStyle[config.EasingStyle]
+                )
+            end
+        end
+    end
+
+    -- Visuals
+    function AimAssist:UpdateVisuals()
+        if not config.ShowFOV then return end
+        
+        if not self.FOVCircle then
+            self.FOVCircle = Drawing.new("Circle")
+            self.FOVCircle.Visible = true
+            self.FOVCircle.Thickness = 2
+            self.FOVCircle.Color = config.FOVColor
+            self.FOVCircle.Transparency = config.FOVTransparency
+            self.FOVCircle.Filled = false
+        end
+        
+        self.FOVCircle.Radius = config.FOV
+        self.FOVCircle.Position = uis:GetMouseLocation()
+    end
+
+    -- Initialization
+    function AimAssist:Init()
+        -- Main render loop
+        self.Connections.RenderStepped = rs.RenderStepped:Connect(function()
+            self:Update()
+            self:UpdateVisuals()
+        end)
+        
+        -- Cleanup on character reset
+        self.Connections.CharacterAdded = plrs.LocalPlayer.CharacterAdded:Connect(function()
+            self.Target = nil
+        end)
+    end
+
+    -- Start the system
+    AimAssist:Init()
+    
+    return AimAssist
+end
