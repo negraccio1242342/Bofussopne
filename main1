@@ -35,16 +35,26 @@ local function isAlive(player)
     return hum and hum.Health > 0 and (not ko or not ko.Value)
 end
 
-local function isVisible(part)
+local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
-    local dir = (part.Position - origin).Unit * 999
+    local direction = (targetPart.Position - origin).Unit * 999
     local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {LocalPlayer.Character, part.Parent}
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
     rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
-    local result = Workspace:Raycast(origin, dir, rayParams)
-    return not result or result.Instance:IsDescendantOf(part.Parent)
+    local result = Workspace:Raycast(origin, direction, rayParams)
+
+    -- If no result, it's fully visible
+    if not result then return true end
+
+    -- If result hits part of target's character, still visible
+    if result.Instance and result.Instance:IsDescendantOf(targetPart.Parent) then
+        return true
+    end
+
+    return false
 end
+
 
 local function passesChecks(player)
     if player == LocalPlayer or not player.Character then return false end
