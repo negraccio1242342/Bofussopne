@@ -1,4 +1,4 @@
--- Aim Lock Core w/ Toggleable Resolver & Checks
+-- Fixed Aim Lock with Optional Checks + Toggleable Resolver
 local config = getgenv().Script and getgenv().Script["Aim assist"]
 if not config or not config.Enabled then return end
 
@@ -20,89 +20,85 @@ local ResolverMode = config.Resolver and config.Resolver.Type or "None"
 local ResolverEnabled = config.Resolver and config.Resolver.Enabled or false
 local ResolverToggleKey = config.Resolver and config.Resolver.Keybind or Enum.KeyCode.R
 
--- Checks
-local Checks = config.Checks or {
-    Alive = true,
-    Team = true,
-    Wall = true,
-    Visible = true
-}
+-- Checks (Optional)
+local Checks = config.Checks or {}
 
 --// State
 local lockTarget = nil
 local isLocked = false
 
---// Utils
-local function isAlive(character)
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local ko = character:FindFirstChild("BodyEffects") and character.BodyEffects:FindFirstChild("K.O")
-    return humanoid and humanoid.Health > 0 and (not ko or ko.Value == false)
+--// Utilities
+local function isAlive(player)
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local ko = char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O")
+    return hum and hum.Health > 0 and (not ko or not ko.Value)
 end
 
 local function isVisible(part)
     local origin = Camera.CFrame.Position
-    local direction = (part.Position - origin).Unit * 999
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character, part.Parent}
-    params.FilterType = Enum.RaycastFilterType.Blacklist
+    local dir = (part.Position - origin).Unit * 999
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character, part.Parent}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
-    local result = Workspace:Raycast(origin, direction, params)
+    local result = Workspace:Raycast(origin, dir, rayParams)
     return not result or result.Instance:IsDescendantOf(part.Parent)
 end
 
 local function passesChecks(player)
-    if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return false end
-    if Checks.Alive and not isAlive(player.Character) then return false end
-    if Checks.Team and player.Team == LocalPlayer.Team then return false end
+    if player == LocalPlayer or not player.Character then return false end
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
 
-    local hrp = player.Character.HumanoidRootPart
+    if Checks.Alive and not isAlive(player) then return false end
+    if Checks.Team and player.Team == LocalPlayer.Team then return false end
     if Checks.Visible and not isVisible(hrp) then return false end
     if Checks.Wall and not isVisible(hrp) then return false end
 
     return true
 end
 
--- Resolver
-local function applyResolverVelocity(player, position)
+local function applyResolver(player, position)
     if not ResolverEnabled or ResolverMode == "None" then return position end
-
-    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return position end
 
-    local velocity = hrp.Velocity
-    local factor = 0.13 -- tweak as needed
-
-    if ResolverMode == "Osiris" then
-        return position + (velocity * factor)
-    elseif ResolverMode == "Aggressive" then
-        return position + (velocity * factor * 1.5)
+    local vel = hrp.Velocity
+    local factor = 0.13
+    if ResolverMode == "Aggressive" then
+        factor = factor * 1.5
     elseif ResolverMode == "Safe" then
-        return position + (velocity * factor * 0.75)
+        factor = factor * 0.75
     end
 
-    return position
+    return position + (vel * factor)
 end
 
--- Targeting
 local function getClosestTarget()
-    local closest, shortest = nil, math.huge
+    local closestPlayer = nil
+    local closestDist = math.huge
+
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player) then
-            local hrp = player.Character.HumanoidRootPart
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
             local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
             if onScreen then
-                local dist = (Vector2.new(screenPos.X, screenPos.Y) - UserInputService:GetMouseLocation()).Magnitude
-                if dist < shortest then
-                    shortest = dist
-                    closest = player
+                local mousePos = UserInputService:GetMouseLocation()
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+
+                if dist < closestDist then
+                    closestDist = dist
+                    closestPlayer = player
                 end
             end
         end
     end
-    return closest
+
+    return closestPlayer
 end
 
--- Keybinds
+--// Keybinds
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
 
@@ -113,27 +109,27 @@ UserInputService.InputBegan:Connect(function(input, gp)
 
     if input.KeyCode == ResolverToggleKey then
         ResolverEnabled = not ResolverEnabled
-        print("Resolver is now", ResolverEnabled and "ENABLED" or "DISABLED")
+        print("[Resolver] Toggled:", ResolverEnabled and "ON" or "OFF")
     end
 end)
 
--- Main Loop
+--// Main Lock Loop
 RunService.RenderStepped:Connect(function()
     if isLocked and lockTarget and passesChecks(lockTarget) then
         local hrp = lockTarget.Character:FindFirstChild("HumanoidRootPart")
         if hrp then
-            local predicted = applyResolverVelocity(lockTarget, hrp.Position)
+            local targetPos = applyResolver(lockTarget, hrp.Position)
             local camCF = Camera.CFrame
-            local newCF = CFrame.lookAt(camCF.Position, predicted)
-            Camera.CFrame = camCF:Lerp(newCF, Smoothness)
+            local targetCF = CFrame.lookAt(camCF.Position, targetPos)
+            Camera.CFrame = camCF:Lerp(targetCF, Smoothness)
 
             if Shake > 0 then
-                local shakeOffset = Vector3.new(
+                local shakeVec = Vector3.new(
                     math.random(-Shake, Shake) * 0.001,
                     math.random(-Shake, Shake) * 0.001,
                     math.random(-Shake, Shake) * 0.001
                 )
-                Camera.CFrame = Camera.CFrame * CFrame.new(shakeOffset)
+                Camera.CFrame = Camera.CFrame * CFrame.new(shakeVec)
             end
         end
     end
