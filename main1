@@ -46,9 +46,18 @@ fovCircle.Visible = UseFov
 --// Utilities
 local function isAlive(player)
     local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local ko = char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O")
-    return hum and hum.Health > 0 and (not ko or not ko.Value)
+    if not char then return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    local bodyEffects = char:FindFirstChild("BodyEffects")
+    local ko = bodyEffects and bodyEffects:FindFirstChild("K.O")
+
+    -- KO check: if the BoolValue exists and is true, they're knocked
+    if ko and ko.Value == true then return false end
+
+    return true
 end
 
 local function isVisible(targetPart)
