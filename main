@@ -1,72 +1,96 @@
-local cfg = getgenv().Script and getgenv().Script.SilentAim
-if not cfg or not cfg.Enabled then return end
+local config = getgenv().Script
+local aimConfig = config and config["Aim assist"]
+local silentConfig = config and config.SilentAim
 
--- Services
+if not aimConfig or not aimConfig.Enabled then return end
+
+--// Services
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Configs
-local Prediction = cfg.SilentPred or 3.19
-local UseFov = cfg.UseFov or true
-local FovRadius = cfg.FOV or 120
-local Resolver = cfg.Resolver or { Enabled = false, Type = "None", Keybind = Enum.KeyCode.R }
-local Checks = cfg.Checks or { Alive = true, Visible = true, Team = true }
+--// Aim Lock Config
+local Smoothness = aimConfig.smoothing or 0.00125
+local XShake = aimConfig.xshake or 0
+local YShake = aimConfig.yshake or 0
+local LockKey = aimConfig.Keybind or Enum.KeyCode.N
+local UseFov = aimConfig.UseFov or false
+local FovRadius = aimConfig.FOVRadius or 200
+
+-- Resolver
+local ResolverMode = aimConfig.Resolver and aimConfig.Resolver.Type or "None"
+local ResolverEnabled = aimConfig.Resolver and aimConfig.Resolver.Enabled or false
+local ResolverToggleKey = aimConfig.Resolver and aimConfig.Resolver.Keybind or Enum.KeyCode.R
+
+-- Silent Aim Config
+local SilentEnabled = silentConfig and silentConfig.Enabled or false
+local SilentPred = silentConfig and silentConfig.SilentPred or 3.19
+
+-- Checks
+local Checks = aimConfig.Checks or {
+    Alive = true,
+    Team = true,
+    Visible = true
+}
 
 -- State
-local ResolverEnabled = Resolver.Enabled
+local isLocked = false
+local lockTarget = nil
 
--- FOV Visual
-local FovCircle = Drawing.new("Circle")
-FovCircle.Radius = FovRadius
-FovCircle.Thickness = 1.5
-FovCircle.NumSides = 64
-FovCircle.Color = Color3.fromRGB(255, 255, 255)
-FovCircle.Filled = false
-FovCircle.Transparency = 0.75
-FovCircle.Visible = UseFov
+-- FOV Circle
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1.5
+fovCircle.NumSides = 64
+fovCircle.Color = Color3.fromRGB(255, 255, 255)
+fovCircle.Filled = false
+fovCircle.Transparency = 0.75
+fovCircle.Visible = UseFov
+fovCircle.Radius = FovRadius
 
--- Utility
+-- Utils
 local function isAlive(player)
     local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local ko = char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O")
-    return hum and hum.Health > 0 and (not ko or not ko.Value)
+    if not char then return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    local bodyEffects = char:FindFirstChild("BodyEffects")
+    local ko = bodyEffects and bodyEffects:FindFirstChild("K.O")
+    return not (ko and ko.Value)
 end
 
 local function isVisible(part)
     if not part then return false end
     local origin = Camera.CFrame.Position
     local dir = (part.Position - origin).Unit * 999
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-
-    local result = Workspace:Raycast(origin, dir, params)
+    local result = Workspace:Raycast(origin, dir, rayParams)
     if not result then return true end
-    if result.Instance:IsDescendantOf(part.Parent) then return true end
-
-    return false
+    return result.Instance:IsDescendantOf(part.Parent)
 end
 
 local function passesChecks(player)
-    if player == LocalPlayer then return false end
-    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return false end
+    if player == LocalPlayer or not player.Character then return false end
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
     if Checks.Alive and not isAlive(player) then return false end
     if Checks.Team and player.Team == LocalPlayer.Team then return false end
-    if Checks.Visible and not isVisible(player.Character.HumanoidRootPart) then return false end
+    if Checks.Visible and not isVisible(hrp) then return false end
     return true
 end
 
-local function applyResolver(pos, velocity)
-    if not ResolverEnabled then return pos end
+local function applyResolver(player, pos, velocity)
+    if not ResolverEnabled or ResolverMode == "None" then return pos end
     local factor = 0.13
-    if Resolver.Type == "Aggressive" then factor *= 1.5 end
-    if Resolver.Type == "Safe" then factor *= 0.75 end
+    if ResolverMode == "Aggressive" then factor *= 1.5
+    elseif ResolverMode == "Safe" then factor *= 0.75 end
     return pos + (velocity * factor)
 end
 
@@ -76,7 +100,7 @@ local function getClosestTarget()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player) then
-            local hrp = player.Character.HumanoidRootPart
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
             local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
             if onScreen then
                 local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
@@ -91,40 +115,61 @@ local function getClosestTarget()
     return closest
 end
 
--- Toggle Resolver
+-- Keybinds
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == Resolver.Keybind then
+    if input.KeyCode == LockKey then
+        isLocked = not isLocked
+        lockTarget = isLocked and getClosestTarget() or nil
+    end
+
+    if input.KeyCode == ResolverToggleKey then
         ResolverEnabled = not ResolverEnabled
-        print("[Silent Aim Resolver] Toggled:", ResolverEnabled and "ON" or "OFF")
+        print("[Resolver] Toggled:", ResolverEnabled and "ENABLED" or "DISABLED")
     end
 end)
 
--- Hook into game calls
+-- Aimlock Loop
+RunService.RenderStepped:Connect(function()
+    fovCircle.Visible = UseFov
+    fovCircle.Position = UserInputService:GetMouseLocation()
+    fovCircle.Radius = FovRadius
+
+    if isLocked and lockTarget and passesChecks(lockTarget) then
+        local hrp = lockTarget.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local targetPos = applyResolver(lockTarget, hrp.Position, hrp.Velocity)
+            local camCF = Camera.CFrame
+            local targetCF = CFrame.lookAt(camCF.Position, targetPos)
+            Camera.CFrame = camCF:Lerp(targetCF, Smoothness)
+
+            if XShake > 0 or YShake > 0 then
+                local angleX = math.rad(math.random(-XShake, XShake))
+                local angleY = math.rad(math.random(-YShake, YShake))
+                Camera.CFrame = Camera.CFrame * CFrame.Angles(angleY, angleX, 0)
+            end
+        end
+    end
+end)
+
+-- Silent Aim Hook
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local args = {...}
     local method = getnamecallmethod()
 
-    if cfg.Enabled and tostring(self) == "MainEvent" and method == "FireServer" then
+    if SilentEnabled and tostring(self) == "MainEvent" and method == "FireServer" then
         local target = getClosestTarget()
         if target and target.Character then
             local hrp = target.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
-                local pos = hrp.Position + (hrp.Velocity * Prediction)
-                pos = applyResolver(pos, hrp.Velocity)
-                args[2] = pos
+                local predicted = hrp.Position + (hrp.Velocity * SilentPred)
+                local resolved = applyResolver(target, predicted, hrp.Velocity)
+                args[2] = resolved
                 return oldNamecall(self, unpack(args))
             end
         end
     end
 
     return oldNamecall(self, ...)
-end)
-
--- Update FOV circle
-RunService.RenderStepped:Connect(function()
-    FovCircle.Visible = UseFov
-    FovCircle.Radius = FovRadius
-    FovCircle.Position = UserInputService:GetMouseLocation()
 end)
