@@ -1,4 +1,4 @@
--- Aim Lock Script (Cleaned, Fixed Visibility, Resolver Toggle)
+-- Aim Lock Core with Fixed Visibility + Resolver Toggle
 local config = getgenv().Script and getgenv().Script["Aim assist"]
 if not config or not config.Enabled then return end
 
@@ -40,16 +40,27 @@ local function isAlive(player)
 end
 
 local function isVisible(targetPart)
+    if not targetPart then return false end
+
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin).Unit * 999
+
     local rayParams = RaycastParams.new()
     rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
     rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 
     local result = Workspace:Raycast(origin, direction, rayParams)
 
+    -- No hit = visible
     if not result then return true end
-    return result.Instance:IsDescendantOf(targetPart.Parent)
+
+    local hit = result.Instance
+    local hitParent = hit:FindFirstAncestorOfClass("Model")
+
+    if hitParent and hitParent == targetPart.Parent then return true end
+    if hit:IsDescendantOf(targetPart.Parent) then return true end
+
+    return false
 end
 
 local function passesChecks(player)
@@ -85,7 +96,7 @@ local function getClosestTarget()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player) then
-            local hrp = player.Character.HumanoidRootPart
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
             local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
             if onScreen then
                 local mousePos = UserInputService:GetMouseLocation()
