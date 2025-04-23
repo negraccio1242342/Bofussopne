@@ -1,38 +1,57 @@
-local cfg = getgenv().Script and getgenv().Script.SilentAim
-if not cfg or not cfg.Enabled then return end
+-- Combined Script: Aim Assist, Silent Aim, and Resolver with FOV + Checks
+
+local config = getgenv().Script
+local aimConfig = config and config["Aim assist"]
+local silentConfig = config and config.SilentAim
 
 -- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
-local Camera = workspace.CurrentCamera
+local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Settings
-local targetPart = cfg.TargetPart or "Head"
-local prediction = cfg.Prediction or 3.19
-local UseFov = cfg.UseFov or false
-local FovRadius = cfg.FOV or 120
-local ResolverEnabled = cfg.Resolver and cfg.Resolver.Enabled or false
-local ResolverType = cfg.Resolver and cfg.Resolver.Type or "None"
-local ToggleKey = cfg.Keybind or Enum.KeyCode.M
-local Checks = cfg.Checks or {}
+-- Aim Assist Config
+local AimEnabled = aimConfig and aimConfig.Enabled
+local AimSmooth = aimConfig and aimConfig.smoothing or 0.00125
+local XShake = aimConfig and aimConfig.xshake or 0
+local YShake = aimConfig and aimConfig.yshake or 0
+local AimKey = aimConfig and aimConfig.Keybind or Enum.KeyCode.N
+local UseFov = aimConfig and aimConfig.UseFov or false
+local FovRadius = aimConfig and aimConfig.FOVRadius or 200
+local AimChecks = aimConfig and aimConfig.Checks or {}
+
+-- Resolver (shared)
+local ResolverMode = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Type or "None"
+local ResolverEnabled = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Enabled or false
+local ResolverToggleKey = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Keybind or Enum.KeyCode.R
+
+-- Silent Aim Config
+local SilentEnabled = silentConfig and silentConfig.Enabled
+local SilentKey = silentConfig and silentConfig.Keybind or Enum.KeyCode.M
+local SilentPred = silentConfig and silentConfig.Prediction or 3.19
+local SilentTargetPart = silentConfig and silentConfig.TargetPart or "Head"
+local SilentUseFov = silentConfig and silentConfig.UseFov or false
+local SilentFovRadius = silentConfig and silentConfig.FOV or 155
+local SilentChecks = silentConfig and silentConfig.Checks or {}
 
 -- State
-local SilentActive = cfg.Enabled
-local lockedTarget = nil
+local AimLocked = false
+local SilentActive = SilentEnabled
+local AimTarget = nil
 
 -- FOV Circle
 local fovCircle = Drawing.new("Circle")
 fovCircle.Thickness = 1.5
 fovCircle.NumSides = 64
-fovCircle.Color = Color3.fromRGB(255, 255, 255)
 fovCircle.Filled = false
 fovCircle.Transparency = 0.75
-fovCircle.Radius = FovRadius
-fovCircle.Visible = UseFov
+fovCircle.Color = Color3.fromRGB(255, 255, 255)
+fovCircle.Visible = UseFov or SilentUseFov
+fovCircle.Radius = math.max(FovRadius, SilentFovRadius)
 
--- Utils
+-- Utilities
 local function isAlive(player)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -41,47 +60,47 @@ local function isAlive(player)
 end
 
 local function isVisible(part)
+    if not part then return false end
     local origin = Camera.CFrame.Position
     local dir = (part.Position - origin).Unit * 999
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    local result = workspace:Raycast(origin, dir, params)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+    local result = Workspace:Raycast(origin, dir, rayParams)
     if not result then return true end
     return result.Instance:IsDescendantOf(part.Parent)
 end
 
-local function passesChecks(player)
+local function passesChecks(player, checks)
     if player == LocalPlayer or not player.Character then return false end
     local hrp = player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    if Checks.Alive and not isAlive(player) then return false end
-    if Checks.Team and player.Team == LocalPlayer.Team then return false end
-    if Checks.Visible and not isVisible(hrp) then return false end
+    if checks.Alive and not isAlive(player) then return false end
+    if checks.Team and player.Team == LocalPlayer.Team then return false end
+    if checks.Visible and not isVisible(hrp) then return false end
     return true
 end
 
 local function applyResolver(pos, velocity)
-    if not ResolverEnabled then return pos end
+    if not ResolverEnabled or ResolverMode == "None" then return pos end
     local factor = 0.13
-    if ResolverType == "Aggressive" then factor *= 1.5
-    elseif ResolverType == "Safe" then factor *= 0.75 end
+    if ResolverMode == "Aggressive" then factor *= 1.5
+    elseif ResolverMode == "Safe" then factor *= 0.75 end
     return pos + (velocity * factor)
 end
 
-local function getClosestTarget()
+local function getClosestTarget(checks, radius)
     local closest, shortest = nil, math.huge
     local mouse = UserInputService:GetMouseLocation()
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if passesChecks(player) then
-            local char = player.Character
-            local part = char and char:FindFirstChild("HumanoidRootPart")
+        if passesChecks(player, checks) then
+            local part = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
             if part then
                 local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
                 if onScreen then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouse).Magnitude
-                    if (not UseFov or dist <= FovRadius) and dist < shortest then
+                    if (not radius or dist <= radius) and dist < shortest then
                         closest = player
                         shortest = dist
                     end
@@ -89,39 +108,57 @@ local function getClosestTarget()
             end
         end
     end
-
     return closest
 end
 
--- Resolver Toggle Key
+-- Input Toggles
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == ToggleKey then
+    if input.KeyCode == AimKey then
+        AimLocked = not AimLocked
+        AimTarget = AimLocked and getClosestTarget(AimChecks, FovRadius) or nil
+    end
+    if input.KeyCode == SilentKey then
         SilentActive = not SilentActive
         print("[Silent Aim] Toggled:", SilentActive and "ENABLED" or "DISABLED")
     end
+    if input.KeyCode == ResolverToggleKey then
+        ResolverEnabled = not ResolverEnabled
+        print("[Resolver] Toggled:", ResolverEnabled and "ENABLED" or "DISABLED")
+    end
 end)
 
--- Hook: Mouse.Hit / Position spoofing
-getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
-    if SilentActive and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
-        local target = getClosestTarget()
-        if target and target.Character and target.Character:FindFirstChild(targetPart) then
-            local part = target.Character[targetPart]
-            local predicted = part.Position + (part.Velocity * (prediction / 1000))
-            local resolved = applyResolver(predicted, part.Velocity)
-            if key == "Hit" then
-                return CFrame.new(resolved)
-            elseif key == "Target" then
-                return part
+-- Render Loop
+RunService.RenderStepped:Connect(function()
+    fovCircle.Visible = UseFov or SilentUseFov
+    fovCircle.Position = UserInputService:GetMouseLocation()
+    fovCircle.Radius = math.max(FovRadius, SilentFovRadius)
+
+    if AimLocked and AimTarget and passesChecks(AimTarget, AimChecks) then
+        local hrp = AimTarget.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local pos = applyResolver(hrp.Position, hrp.Velocity)
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), AimSmooth)
+            if XShake > 0 or YShake > 0 then
+                local angleX = math.rad(math.random(-XShake, XShake))
+                local angleY = math.rad(math.random(-YShake, YShake))
+                Camera.CFrame *= CFrame.Angles(angleY, angleX, 0)
             end
         end
     end
-    return getgenv().OriginalIndex(obj, key)
 end)
 
--- FOV Update
-RunService.RenderStepped:Connect(function()
-    fovCircle.Visible = UseFov
-    fovCircle.Position = UserInputService:GetMouseLocation()
+-- Silent Aim Hook
+getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
+    if SilentActive and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
+        local target = getClosestTarget(SilentChecks, SilentFovRadius)
+        if target and target.Character and target.Character:FindFirstChild(SilentTargetPart) then
+            local part = target.Character[SilentTargetPart]
+            local predicted = part.Position + (part.Velocity * (SilentPred / 1000))
+            local resolved = applyResolver(predicted, part.Velocity)
+            if key == "Hit" then return CFrame.new(resolved) end
+            if key == "Target" then return part end
+        end
+    end
+    return getgenv().OriginalIndex(obj, key)
 end)
