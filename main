@@ -1,179 +1,31 @@
--- Configuration Table (Easy to Modify)
-getgenv().AimAssistConfig = {
-    Enabled = true,
-    
-    -- Targeting
-    FOV = 250,
-    TeamCheck = true,
-    WallCheck = true,
-    AimPart = "Head",  -- "Head", "UpperTorso", "HumanoidRootPart"
-    
-    -- Prediction
-    Prediction = 0.14,
-    YOffset = -10,
-    AirShotMultiplier = 1.2,
-    
-    -- Smoothing
-    Smoothness = 0.08,
-    EasingStyle = "Quad", -- "Linear", "Sine", "Quad", "Cubic"
-    
-    -- Visuals
-    ShowFOV = true,
-    FOVColor = Color3.fromRGB(0, 255, 0),
-    
-    -- Activation
-    Keybind = Enum.KeyCode.Q,
-    HoldToActivate = false
-}
+-- Core script hosted on GitHub
+local Script = getgenv().Script
+if not Script or not Script.Teleport or not Script.Teleport.Enabled then return end
 
--- Core Functionality (No Need to Modify)
-local function InitializeAimAssist(config)
-    -- Services
-    local Players = game:GetService("Players")
-    local RunService = game:GetService("RunService")
-    local UserInputService = game:GetService("UserInputService")
-    local LocalPlayer = Players.LocalPlayer
-    local Camera = workspace.CurrentCamera
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
 
-    -- State
-    local Target = nil
-    local Active = false
-    local FOVCircle = nil
+-- Teleport function
+local function teleportToRandomPosition()
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local root = char.HumanoidRootPart
 
-    -- Create FOV Circle
-    if config.ShowFOV then
-        FOVCircle = Drawing.new("Circle")
-        FOVCircle.Visible = true
-        FOVCircle.Thickness = 2
-        FOVCircle.Color = config.FOVColor
-        FOVCircle.Transparency = 0.7
-        FOVCircle.Filled = false
-    end
+    -- Change these ranges as needed
+    local newPosition = root.Position + Vector3.new(
+        math.random(-50, 50),
+        math.random(5, 25),
+        math.random(-50, 50)
+    )
 
-    -- Find Target Function
-    local function FindTarget()
-        local closestPlayer, closestDistance = nil, config.FOV
-        
-        for _, player in pairs(Players:GetPlayers()) do
-            if player == LocalPlayer then continue end
-            
-            local character = player.Character
-            if not character then continue end
-            
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
-            if not humanoid or humanoid.Health <= 0 then continue end
-            
-            if config.TeamCheck and player.Team == LocalPlayer.Team then continue end
-            
-            local targetPart = character:FindFirstChild(config.AimPart)
-            if not targetPart then continue end
-            
-            local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-            if not onScreen then continue end
-            
-            local mousePos = UserInputService:GetMouseLocation()
-            local distance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-            
-            if distance < closestDistance then
-                if config.WallCheck then
-                    local rayParams = RaycastParams.new()
-                    rayParams.FilterDescendantsInstances = {LocalPlayer.Character, character}
-                    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-                    
-                    local rayResult = workspace:Raycast(
-                        Camera.CFrame.Position,
-                        (targetPart.Position - Camera.CFrame.Position).Unit * 1000,
-                        rayParams
-                    )
-                    
-                    if rayResult and rayResult.Instance:IsDescendantOf(character) then
-                        closestPlayer = player
-                        closestDistance = distance
-                    end
-                else
-                    closestPlayer = player
-                    closestDistance = distance
-                end
-            end
-        end
-        
-        return closestPlayer
-    end
-
-    -- Prediction Calculation
-    local function CalculatePrediction(target)
-        local targetPart = target.Character:FindFirstChild(config.AimPart)
-        if not targetPart then return nil end
-        
-        local velocity = targetPart.Velocity
-        local isAirborne = not target.Character.Humanoid.FloorMaterial
-        
-        local prediction = velocity * config.Prediction
-        if isAirborne then
-            prediction = prediction * config.AirShotMultiplier
-        end
-        
-        return targetPart.Position + prediction + Vector3.new(0, config.YOffset, 0)
-    end
-
-    -- Main Update Loop
-    RunService.RenderStepped:Connect(function()
-        if not config.Enabled then 
-            if FOVCircle then FOVCircle.Visible = false end
-            return 
-        end
-        
-        -- Update FOV Circle
-        if FOVCircle then
-            FOVCircle.Radius = config.FOV
-            FOVCircle.Position = UserInputService:GetMouseLocation()
-            FOVCircle.Visible = true
-        end
-        
-        -- Check Activation
-        if config.HoldToActivate then
-            Active = UserInputService:IsKeyDown(config.Keybind)
-        else
-            Active = config.Enabled
-        end
-        
-        -- Find and Track Target
-        if Active then
-            if not Target then
-                Target = FindTarget()
-            end
-            
-            if Target and Target.Character then
-                local predictedPos = CalculatePrediction(Target)
-                if predictedPos then
-                    local targetCF = CFrame.new(Camera.CFrame.Position, predictedPos)
-                    Camera.CFrame = Camera.CFrame:Lerp(
-                        targetCF,
-                        math.clamp(config.Smoothness, 0.01, 1),
-                        Enum.EasingStyle[config.EasingStyle]
-                    )
-                end
-            end
-        else
-            Target = nil
-        end
-    end)
-
-    -- Cleanup on character reset
-    LocalPlayer.CharacterAdded:Connect(function()
-        Target = nil
-    end)
+    root.CFrame = CFrame.new(newPosition)
 end
 
--- Start the AimAssist
-InitializeAimAssist(getgenv().AimAssistConfig)
-
--- Keybind to toggle (if not using HoldToActivate)
-if not getgenv().AimAssistConfig.HoldToActivate then
-    game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
-        if processed then return end
-        if input.KeyCode == getgenv().AimAssistConfig.Keybind then
-            getgenv().AimAssistConfig.Enabled = not getgenv().AimAssistConfig.Enabled
-        end
-    end)
-end
+-- Key listener
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Script.Teleport.Keybind then
+        teleportToRandomPosition()
+    end
+end)
