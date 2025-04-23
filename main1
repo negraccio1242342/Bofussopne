@@ -1,4 +1,4 @@
--- Fixed Aim Lock with Optional Checks + Toggleable Resolver
+-- Aim Lock Script (Cleaned, Fixed Visibility, Resolver Toggle)
 local config = getgenv().Script and getgenv().Script["Aim assist"]
 if not config or not config.Enabled then return end
 
@@ -6,26 +6,30 @@ if not config or not config.Enabled then return end
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Camera = workspace.CurrentCamera
-local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
 
 --// Config
 local Smoothness = config.smoothing or 0.00125
 local Shake = config.shake or 0
 local LockKey = config.Keybind or Enum.KeyCode.N
 
--- Resolver
+-- Resolver Config
 local ResolverMode = config.Resolver and config.Resolver.Type or "None"
 local ResolverEnabled = config.Resolver and config.Resolver.Enabled or false
 local ResolverToggleKey = config.Resolver and config.Resolver.Keybind or Enum.KeyCode.R
 
--- Checks (Optional)
-local Checks = config.Checks or {}
+-- Checks
+local Checks = config.Checks or {
+    Alive = true,
+    Team = true,
+    Visible = true
+}
 
 --// State
-local lockTarget = nil
 local isLocked = false
+local lockTarget = nil
 
 --// Utilities
 local function isAlive(player)
@@ -44,17 +48,9 @@ local function isVisible(targetPart)
 
     local result = Workspace:Raycast(origin, direction, rayParams)
 
-    -- If no result, it's fully visible
     if not result then return true end
-
-    -- If result hits part of target's character, still visible
-    if result.Instance and result.Instance:IsDescendantOf(targetPart.Parent) then
-        return true
-    end
-
-    return false
+    return result.Instance:IsDescendantOf(targetPart.Parent)
 end
-
 
 local function passesChecks(player)
     if player == LocalPlayer or not player.Character then return false end
@@ -64,7 +60,6 @@ local function passesChecks(player)
     if Checks.Alive and not isAlive(player) then return false end
     if Checks.Team and player.Team == LocalPlayer.Team then return false end
     if Checks.Visible and not isVisible(hrp) then return false end
-    if Checks.Wall and not isVisible(hrp) then return false end
 
     return true
 end
@@ -86,26 +81,24 @@ local function applyResolver(player, position)
 end
 
 local function getClosestTarget()
-    local closestPlayer = nil
-    local closestDist = math.huge
+    local closest, shortest = nil, math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player) then
-            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            local hrp = player.Character.HumanoidRootPart
             local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
             if onScreen then
                 local mousePos = UserInputService:GetMouseLocation()
                 local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-
-                if dist < closestDist then
-                    closestDist = dist
-                    closestPlayer = player
+                if dist < shortest then
+                    shortest = dist
+                    closest = player
                 end
             end
         end
     end
 
-    return closestPlayer
+    return closest
 end
 
 --// Keybinds
@@ -119,11 +112,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
 
     if input.KeyCode == ResolverToggleKey then
         ResolverEnabled = not ResolverEnabled
-        print("[Resolver] Toggled:", ResolverEnabled and "ON" or "OFF")
+        print("[Resolver] Toggled:", ResolverEnabled and "ENABLED" or "DISABLED")
     end
 end)
 
---// Main Lock Loop
+--// Lock Loop
 RunService.RenderStepped:Connect(function()
     if isLocked and lockTarget and passesChecks(lockTarget) then
         local hrp = lockTarget.Character:FindFirstChild("HumanoidRootPart")
