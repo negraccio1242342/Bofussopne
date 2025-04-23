@@ -1,4 +1,4 @@
--- Combined Script: Aim Assist, Silent Aim, and Resolver with FOV + Checks
+-- Finalized Aim Assist + Silent Aim Script with Resolver, Sticky Aim, and Display
 
 local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
@@ -22,8 +22,10 @@ local AimShowFOV = aimConfig and aimConfig.ShowFOV or false
 local AimKey = aimConfig and aimConfig.LockOnKey or Enum.KeyCode.C
 local AimHold = aimConfig and aimConfig.HoldBind or false
 local AimChecks = aimConfig and aimConfig.Checks or {}
+local XShake = aimConfig and aimConfig.xshake or 0
+local YShake = aimConfig and aimConfig.yshake or 0
 
--- Resolver Config
+-- Resolver
 local ResolverMode = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Type or "None"
 local ResolverEnabled = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Enabled or false
 local ResolverToggleKey = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Keybind or Enum.KeyCode.R
@@ -55,7 +57,7 @@ fovCircle.Color = Color3.fromRGB(255, 255, 255)
 fovCircle.Visible = AimShowFOV or SilentUseFov
 fovCircle.Radius = math.max(AimFOV, SilentFovRadius)
 
--- Silent Target Label
+-- Target Label
 local targetLabel = Drawing.new("Text")
 targetLabel.Visible = false
 targetLabel.Size = 16
@@ -105,7 +107,6 @@ end
 local function getClosestTarget(checks, radius)
     local closest, shortest = nil, math.huge
     local mouse = UserInputService:GetMouseLocation()
-
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player, checks) then
             local part = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -124,10 +125,10 @@ local function getClosestTarget(checks, radius)
     return closest
 end
 
--- Input
+-- Keybinds
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == AimKey then
+    if input.KeyCode == AimKey and AimEnabled then
         if AimHold then
             HoldingAim = true
         else
@@ -135,12 +136,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
             AimTarget = AimLocked and getClosestTarget(AimChecks, AimFOV) or nil
         end
     end
-    if input.KeyCode == SilentKey then
+    if input.KeyCode == SilentKey and SilentEnabled then
         if SilentSticky then
             SilentTarget = SilentTarget and nil or getClosestTarget(SilentChecks, SilentFovRadius)
         else
             SilentTarget = nil
-            SilentActive = not SilentActive
         end
         print("[Silent Aim] Toggled:", SilentTarget and "ENABLED" or "DISABLED")
     end
@@ -158,7 +158,7 @@ UserInputService.InputEnded:Connect(function(input, gp)
     end
 end)
 
--- Main Loop
+-- Render Loop
 RunService.RenderStepped:Connect(function()
     fovCircle.Visible = AimShowFOV or SilentUseFov
     fovCircle.Position = UserInputService:GetMouseLocation()
@@ -167,19 +167,21 @@ RunService.RenderStepped:Connect(function()
     if (AimLocked or HoldingAim) and AimTarget and passesChecks(AimTarget, AimChecks) then
         local targetPart = AimTarget.Character:FindFirstChild(AimPart)
         if targetPart then
-            local targetPos = applyResolver(targetPart.Position, targetPart.Velocity)
+            local pos = applyResolver(targetPart.Position, targetPart.Velocity)
             if AimType == "Camera" then
-                Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, targetPos), AimSmooth)
-            elseif AimType == "Mouse" then
-                mousemoverel((targetPos - Camera.CFrame.Position).X, (targetPos - Camera.CFrame.Position).Y)
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), AimSmooth)
+                if XShake > 0 or YShake > 0 then
+                    local angleX = math.rad(math.random(-XShake, XShake))
+                    local angleY = math.rad(math.random(-YShake, YShake))
+                    Camera.CFrame *= CFrame.Angles(angleY, angleX, 0)
+                end
             end
         end
     elseif HoldingAim then
         AimTarget = getClosestTarget(AimChecks, AimFOV)
     end
 
-    -- Show Silent Target under crosshair
-    if SilentShowTarget and SilentTarget then
+    if SilentEnabled and SilentShowTarget and SilentTarget then
         local name = SilentTarget.DisplayName ~= "" and SilentTarget.DisplayName or SilentTarget.Name
         targetLabel.Text = "Locked: " .. name
         targetLabel.Visible = true
@@ -190,10 +192,9 @@ end)
 
 -- Silent Aim Hook
 getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
-    if SilentTarget and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
-        local target = SilentTarget
-        if target and target.Character and target.Character:FindFirstChild(SilentTargetPart) then
-            local part = target.Character[SilentTargetPart]
+    if SilentEnabled and SilentTarget and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
+        local part = SilentTarget.Character and SilentTarget.Character:FindFirstChild(SilentTargetPart)
+        if part then
             local predicted = part.Position + (part.Velocity * (SilentPred / 1000))
             local resolved = applyResolver(predicted, part.Velocity)
             if key == "Hit" then return CFrame.new(resolved) end
