@@ -1,0 +1,73 @@
+-- Aim Lock Core (GitHub-hosted)
+local config = getgenv().Script and getgenv().Script["Aim assist"]
+if not config or not config.Enabled then return end
+
+--// Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+--// Config
+local Smoothness = config.smoothing or 0.00125
+local Shake = config.shake or 0
+local Keybind = config.Keybind or Enum.KeyCode.N
+
+--// State
+local lockTarget = nil
+local isLocked = false
+
+--// Functions
+local function getClosestTarget()
+    local closest, shortest = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local part = player.Character.HumanoidRootPart
+            local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if onScreen then
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - UserInputService:GetMouseLocation()).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    closest = player
+                end
+            end
+        end
+    end
+    return closest
+end
+
+--// Input Handling
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Keybind then
+        isLocked = not isLocked
+        if isLocked then
+            lockTarget = getClosestTarget()
+        else
+            lockTarget = nil
+        end
+    end
+end)
+
+--// Main Lock Logic
+RunService.RenderStepped:Connect(function()
+    if isLocked and lockTarget and lockTarget.Character and lockTarget.Character:FindFirstChild("HumanoidRootPart") then
+        local part = lockTarget.Character.HumanoidRootPart
+        local predictedPos = part.Position
+
+        local cameraCF = Camera.CFrame
+        local targetCF = CFrame.lookAt(cameraCF.Position, predictedPos)
+        Camera.CFrame = cameraCF:Lerp(targetCF, Smoothness)
+
+        -- Optional shake
+        if Shake > 0 then
+            local offset = Vector3.new(
+                math.random(-Shake, Shake) * 0.001,
+                math.random(-Shake, Shake) * 0.001,
+                math.random(-Shake, Shake) * 0.001
+            )
+            Camera.CFrame = Camera.CFrame * CFrame.new(offset)
+        end
+    end
+end)
