@@ -1,4 +1,4 @@
--- Finalized Aim Assist + Silent Aim Script with Resolver, Sticky Aim, and Display
+-- Finalized Aim Assist + Silent Aim Script with Full Feature Logic and Fixes
 
 local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
@@ -142,7 +142,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
         else
             SilentTarget = nil
         end
-        print("[Silent Aim] Toggled:", SilentTarget and "ENABLED" or "DISABLED")
     end
     if input.KeyCode == ResolverToggleKey then
         ResolverEnabled = not ResolverEnabled
