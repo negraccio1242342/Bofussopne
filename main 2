@@ -1,20 +1,11 @@
 -- Finalized Aim Assist + Silent Aim + Triggerbot + Hitbox Expander Script (Updated)
 
 local config = getgenv().Script
+local miscConfig = config and config.NoJumpCooldown or {}
 local aimConfig = config and config["Aim assist"]
 local silentConfig = config and config.SilentAim
 local trigConfig = config and config.Triggerbot or {}
-local hitboxConfig = config and config.HitboxExpander or {
-    Enabled = false,
-    Visualize = false,
-    Scaling = {
-        Enabled = false,
-        X = 0,
-        Y = 0,
-        Z = 0
-    },
-    NormalSize = 0
-}
+
 
 -- Services
 local Players = game:GetService("Players")
@@ -148,82 +139,28 @@ UserInputService.InputEnded:Connect(function(input, gp)
     end
 end)
 
--- Hitbox Expander
-local function applyHitboxExpansion()
-    if not hitboxConfig.Enabled then return end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local root = player.Character.HumanoidRootPart
-            local char = player.Character
-
-            if not char:FindFirstChild("_DummyHitbox") then
-                local dummy = Instance.new("Part")
-                dummy.Name = "_DummyHitbox"
-                dummy.Size = hitboxConfig.Scaling and hitboxConfig.Scaling.Enabled
-                    and Vector3.new(hitboxConfig.Scaling.X, hitboxConfig.Scaling.Y, hitboxConfig.Scaling.Z)
-                    or Vector3.new(hitboxConfig.NormalSize, hitboxConfig.NormalSize, hitboxConfig.NormalSize)
-                dummy.Transparency = hitboxConfig.Visualize and 0.5 or 1
-                dummy.Anchored = false
-                dummy.CanCollide = false
-                dummy.Massless = true
-                dummy.Color = Color3.fromRGB(0, 255, 0)
-                dummy.Material = Enum.Material.ForceField
-                dummy.CFrame = root.CFrame
-                dummy.Parent = char
-
-                local weld = Instance.new("WeldConstraint")
-                weld.Part0 = dummy
-                weld.Part1 = root
-                weld.Parent = dummy
-
-                if hitboxConfig.Visualize then
-                    local adorn = Instance.new("SelectionBox")
-                    adorn.Name = "HitboxEdges"
-                    adorn.Adornee = dummy
-                    adorn.LineThickness = 0.05
-                    adorn.Color3 = Color3.fromRGB(0, 0, 255)
-                    adorn.Transparency = 0.8
-                    adorn.Parent = dummy
+-- Remove Jump Cooldown
+local function removeJumpCooldown(character)
+    if not character then return end
+    if miscConfig.Enabled then
+        local hum = character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
+                if hum.JumpPower ~= 55 then
+                    hum.JumpPower = 55
                 end
-            end
+            end)
         end
     end
 end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local part = player.Character.HumanoidRootPart
 
-            if hitboxConfig.Scaling and hitboxConfig.Scaling.Enabled then
-                part.Size = Vector3.new(
-                    hitboxConfig.Scaling.X,
-                    hitboxConfig.Scaling.Y,
-                    hitboxConfig.Scaling.Z
-                )
-            else
-                part.Size = Vector3.new(
-                    hitboxConfig.NormalSize,
-                    hitboxConfig.NormalSize,
-                    hitboxConfig.NormalSize
-                )
-            end
+removeJumpCooldown(LocalPlayer.Character)
 
-            part.Transparency = hitboxConfig.Visualize and 0.5 or 1
-            part.CanCollide = false
-            part.Massless = true
+LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    removeJumpCooldown(newCharacter)
+end)
 
-            if hitboxConfig.Visualize then
-                local adorn = part:FindFirstChild("HitboxEdges") or Instance.new("SelectionBox")
-                adorn.Name = "HitboxEdges"
-                adorn.Adornee = part
-                adorn.LineThickness = 0.05
-                adorn.SurfaceColor3 = Color3.fromRGB(0, 0, 255)
-                adorn.SurfaceTransparency = 0.8
-                adorn.Parent = part
-            end
-        end
-    end
-end
+
 
 -- Render Loop
 RunService.RenderStepped:Connect(function()
@@ -279,10 +216,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    if hitboxConfig.Enabled then
-        applyHitboxExpansion()
-    end
-end)
+    )
 
 -- Silent Aim Hook
 getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
