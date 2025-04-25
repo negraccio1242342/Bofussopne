@@ -1,21 +1,101 @@
--- Finalized Aim Assist + Silent Aim + Triggerbot + Hitbox Expander Script (Updated)
+-- Da Hood Combat Script (Stable Version)
+-- Features: Aim Assist, Silent Aim, Triggerbot, Hitbox Expander
 
-local config = getgenv().Script
-local miscConfig = config and config.NoJumpCooldown or {}
-local aimConfig = config and config["Aim assist"]
-local silentConfig = config and config.SilentAim
-local trigConfig = config and config.Triggerbot or {}
+local function safeGetService(serviceName)
+    local success, service = pcall(function()
+        return game:GetService(serviceName)
+    end)
+    return success and service or nil
+end
 
+-- Initialize services with error handling
+local Players = safeGetService("Players")
+local RunService = safeGetService("RunService")
+local Workspace = safeGetService("Workspace")
+local UserInputService = safeGetService("UserInputService")
 
--- Services
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
-local Camera = Workspace.CurrentCamera
+if not (Players and RunService and Workspace and UserInputService) then
+    warn("Essential services not available")
+    return
+end
+
+-- Wait for LocalPlayer if needed
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    LocalPlayer = Players.LocalPlayer
+end
 
--- Additional State
+-- Wait for camera if needed
+local Camera = Workspace.CurrentCamera
+if not Camera then
+    Workspace:GetPropertyChangedSignal("CurrentCamera"):Wait()
+    Camera = Workspace.CurrentCamera
+end
+
+-- Configuration (can be moved to external file if needed)
+local Config = {
+    AimAssist = {
+        Enabled = true,
+        Smoothing = 0.0025,
+        XShake = 2,
+        YShake = 2,
+        LockOnKey = Enum.KeyCode.C,
+        HoldBind = false,
+        Type = "Camera",
+        AimPart = "HumanoidRootPart",
+        FOV = 350,
+        ShowFOV = true,
+        Resolver = {
+            Enabled = false,
+            Type = "Safe",
+            Keybind = Enum.KeyCode.R
+        },
+        Checks = {
+            Alive = true,
+            Team = false,
+            Visible = true
+        }
+    },
+    SilentAim = {
+        Enabled = true,
+        Keybind = Enum.KeyCode.M,
+        StickyAim = true,
+        SilentTarget = true,
+        Prediction = 3.19,
+        TargetPart = "Head",
+        UseFov = true,
+        FOV = 155,
+        Resolver = {
+            Enabled = true,
+            Type = "Safe",
+            Keybind = Enum.KeyCode.R
+        },
+        Checks = {
+            Alive = true,
+            Team = false,
+            Visible = true
+        }
+    },
+    Triggerbot = {
+        Enabled = true,
+        Keybind = Enum.KeyCode.T,
+        HoldToActivate = false,
+        Cooldown = 0.1,
+        HitChance = 90,
+        MaxDistance = 1000,
+        VisibilityCheck = true,
+        TeamCheck = true,
+        Prediction = true,
+        PredictionMultiplier = 0.16,
+        TargetPart = "Head"
+    },
+    Misc = {
+        NoJumpCooldown = true
+    }
+}
+
+-- State variables
 local AimLocked = false
 local AimTarget = nil
 local SilentTarget = nil
@@ -23,32 +103,41 @@ local HoldingAim = false
 local TriggerActive = false
 local LastTriggerTime = 0
 
--- FOV Circle
-local fovCircle = Drawing.new("Circle")
-fovCircle.Thickness = 1.5
-fovCircle.NumSides = 64
-fovCircle.Filled = false
-fovCircle.Transparency = 0.75
-fovCircle.Color = Color3.fromRGB(255, 255, 255)
+-- Safe drawing creation
+local fovCircle, targetLabel
+do
+    local success, circle = pcall(Drawing.new, "Circle")
+    if success then
+        fovCircle = circle
+        fovCircle.Thickness = 1.5
+        fovCircle.NumSides = 64
+        fovCircle.Filled = false
+        fovCircle.Transparency = 0.75
+        fovCircle.Color = Color3.fromRGB(255, 255, 255)
+    end
 
--- Target Label
-local targetLabel = Drawing.new("Text")
-targetLabel.Visible = false
-targetLabel.Size = 16
-targetLabel.Center = true
-targetLabel.Outline = true
-targetLabel.Color = Color3.fromRGB(255, 255, 255)
-targetLabel.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2 + 30)
+    local success, text = pcall(Drawing.new, "Text")
+    if success then
+        targetLabel = text
+        targetLabel.Visible = false
+        targetLabel.Size = 16
+        targetLabel.Center = true
+        targetLabel.Outline = true
+        targetLabel.Color = Color3.fromRGB(255, 255, 255)
+        targetLabel.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2 + 30)
+    end
+end
 
--- Utility Functions
+-- Utility functions
 local function isAlive(player)
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local ko = char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O")
+    if not player or not player.Character then return false end
+    local hum = player.Character:FindFirstChildOfClass("Humanoid")
+    local ko = player.Character:FindFirstChild("BodyEffects") and player.Character.BodyEffects:FindFirstChild("K.O")
     return hum and hum.Health > 0 and (not ko or not ko.Value)
 end
 
 local function isVisible(part)
+    if not part or not Camera then return false end
     local origin = Camera.CFrame.Position
     local dir = (part.Position - origin).Unit * 999
     local rayParams = RaycastParams.new()
@@ -59,7 +148,7 @@ local function isVisible(part)
 end
 
 local function passesChecks(player, checks)
-    if player == LocalPlayer or not player.Character then return false end
+    if not player or player == LocalPlayer or not player.Character then return false end
     local part = player.Character:FindFirstChild("HumanoidRootPart")
     if not part then return false end
     if checks.Alive and not isAlive(player) then return false end
@@ -68,24 +157,25 @@ local function passesChecks(player, checks)
     return true
 end
 
-local function applyResolver(pos, velocity)
-    if not silentConfig.Resolver or not silentConfig.Resolver.Enabled then return pos end
+local function applyResolver(pos, velocity, resolverConfig)
+    if not resolverConfig or not resolverConfig.Enabled then return pos end
     local factor = 0.13
-    if silentConfig.Resolver.Type == "Aggressive" then factor *= 1.5
-    elseif silentConfig.Resolver.Type == "Safe" then factor *= 0.75 end
+    if resolverConfig.Type == "Aggressive" then factor *= 1.5
+    elseif resolverConfig.Type == "Safe" then factor *= 0.75 end
     return pos + (velocity * factor)
 end
 
 local function getClosestTarget(checks, radius)
     local closest, shortest = nil, math.huge
-    local mouse = UserInputService:GetMouseLocation()
+    local mousePos = UserInputService:GetMouseLocation()
+    
     for _, player in ipairs(Players:GetPlayers()) do
         if passesChecks(player, checks) then
-            local part = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local part = player.Character:FindFirstChild("HumanoidRootPart")
             if part then
                 local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
                 if onScreen then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouse).Magnitude
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
                     if (not radius or dist <= radius) and dist < shortest then
                         closest = player
                         shortest = dist
@@ -94,33 +184,36 @@ local function getClosestTarget(checks, radius)
             end
         end
     end
+    
     return closest
 end
 
--- Input Handling
+-- Input handling
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if aimConfig and input.KeyCode == (aimConfig.LockOnKey or Enum.KeyCode.C) then
-        if aimConfig.HoldBind then
+    
+    -- Aim assist toggle
+    if input.KeyCode == Config.AimAssist.LockOnKey then
+        if Config.AimAssist.HoldBind then
             HoldingAim = true
         else
             AimLocked = not AimLocked
-            AimTarget = AimLocked and getClosestTarget(aimConfig.Checks, aimConfig.FOV) or nil
+            AimTarget = AimLocked and getClosestTarget(Config.AimAssist.Checks, Config.AimAssist.FOV) or nil
         end
     end
-    if silentConfig and input.KeyCode == (silentConfig.Keybind or Enum.KeyCode.M) then
-        if silentConfig.StickyAim then
-            SilentTarget = SilentTarget and nil or getClosestTarget(silentConfig.Checks, silentConfig.FOV)
+    
+    -- Silent aim toggle
+    if input.KeyCode == Config.SilentAim.Keybind then
+        if Config.SilentAim.StickyAim then
+            SilentTarget = SilentTarget and nil or getClosestTarget(Config.SilentAim.Checks, Config.SilentAim.FOV)
         else
             SilentTarget = nil
         end
     end
-    if silentConfig and silentConfig.Resolver and input.KeyCode == (silentConfig.Resolver.Keybind or Enum.KeyCode.R) then
-        silentConfig.Resolver.Enabled = not silentConfig.Resolver.Enabled
-        print("[Resolver] Toggled:", silentConfig.Resolver.Enabled and "ENABLED" or "DISABLED")
-    end
-    if trigConfig and input.KeyCode == (trigConfig.Keybind or Enum.KeyCode.T) then
-        if trigConfig.HoldToActivate then
+    
+    -- Triggerbot toggle
+    if input.KeyCode == Config.Triggerbot.Keybind then
+        if Config.Triggerbot.HoldToActivate then
             TriggerActive = true
         else
             TriggerActive = not TriggerActive
@@ -130,83 +223,87 @@ end)
 
 UserInputService.InputEnded:Connect(function(input, gp)
     if gp then return end
-    if aimConfig and aimConfig.HoldBind and input.KeyCode == (aimConfig.LockOnKey or Enum.KeyCode.C) then
+    
+    if input.KeyCode == Config.AimAssist.LockOnKey and Config.AimAssist.HoldBind then
         HoldingAim = false
         AimTarget = nil
     end
-    if trigConfig.HoldToActivate and input.KeyCode == (trigConfig.Keybind or Enum.KeyCode.T) then
+    
+    if input.KeyCode == Config.Triggerbot.Keybind and Config.Triggerbot.HoldToActivate then
         TriggerActive = false
     end
 end)
 
--- Remove Jump Cooldown
+-- Remove jump cooldown
 local function removeJumpCooldown(character)
-    if not character then return end
-    if miscConfig.Enabled then
-        local hum = character:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
-                if hum.JumpPower ~= 55 then
-                    hum.JumpPower = 55
-                end
-            end)
-        end
+    if not character or not Config.Misc.NoJumpCooldown then return end
+    
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
+            if hum.JumpPower ~= 55 then
+                hum.JumpPower = 55
+            end
+        end)
     end
 end
 
 removeJumpCooldown(LocalPlayer.Character)
+LocalPlayer.CharacterAdded:Connect(removeJumpCooldown)
 
-LocalPlayer.CharacterAdded:Connect(function(newCharacter)
-    removeJumpCooldown(newCharacter)
-end)
-
-
-
--- Render Loop
-RunService.RenderStepped:Connect(function()
-    fovCircle.Visible = (aimConfig and aimConfig.ShowFOV) or (silentConfig and silentConfig.UseFov)
-    fovCircle.Radius = math.max((aimConfig and aimConfig.FOV) or 0, (silentConfig and silentConfig.FOV) or 0)
-    fovCircle.Position = UserInputService:GetMouseLocation()
-
-    if aimConfig and (AimLocked or HoldingAim) and AimTarget and passesChecks(AimTarget, aimConfig.Checks) then
-        local targetPart = AimTarget.Character and AimTarget.Character:FindFirstChild(aimConfig.AimPart or "HumanoidRootPart")
+-- Main loop
+local function update()
+    -- Update FOV circle
+    if fovCircle then
+        fovCircle.Visible = Config.AimAssist.ShowFOV or Config.SilentAim.UseFov
+        fovCircle.Radius = math.max(Config.AimAssist.FOV, Config.SilentAim.FOV)
+        fovCircle.Position = UserInputService:GetMouseLocation()
+    end
+    
+    -- Aim assist logic
+    if Config.AimAssist.Enabled and (AimLocked or HoldingAim) and AimTarget and passesChecks(AimTarget, Config.AimAssist.Checks) then
+        local targetPart = AimTarget.Character:FindFirstChild(Config.AimAssist.AimPart)
         if targetPart then
-            local pos = applyResolver(targetPart.Position, targetPart.Velocity)
-            if aimConfig.Type == "Camera" then
-                Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), aimConfig.smoothing or 0.00125)
-                if aimConfig.xshake or aimConfig.yshake then
+            local pos = applyResolver(targetPart.Position, targetPart.Velocity, Config.AimAssist.Resolver)
+            if Config.AimAssist.Type == "Camera" then
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), Config.AimAssist.Smoothing)
+                if Config.AimAssist.XShake or Config.AimAssist.YShake then
                     Camera.CFrame *= CFrame.Angles(
-                        math.rad(math.random(-aimConfig.yshake, aimConfig.yshake)),
-                        math.rad(math.random(-aimConfig.xshake, aimConfig.xshake)), 0)
+                        math.rad(math.random(-Config.AimAssist.YShake, Config.AimAssist.YShake)),
+                        math.random(-Config.AimAssist.XShake, Config.AimAssist.XShake)), 0)
                 end
             end
         end
-    elseif HoldingAim and aimConfig then
-        AimTarget = getClosestTarget(aimConfig.Checks, aimConfig.FOV)
+    elseif HoldingAim then
+        AimTarget = getClosestTarget(Config.AimAssist.Checks, Config.AimAssist.FOV)
     end
-
-    if silentConfig and silentConfig.Enabled and silentConfig.SilentTarget and SilentTarget then
-        local name = SilentTarget.DisplayName ~= "" and SilentTarget.DisplayName or SilentTarget.Name
-        targetLabel.Text = "Locked: " .. name
-        targetLabel.Visible = true
-    else
-        targetLabel.Visible = false
+    
+    -- Silent aim target label
+    if targetLabel then
+        if Config.SilentAim.Enabled and Config.SilentAim.SilentTarget and SilentTarget then
+            local name = SilentTarget.DisplayName ~= "" and SilentTarget.DisplayName or SilentTarget.Name
+            targetLabel.Text = "Locked: " .. name
+            targetLabel.Visible = true
+        else
+            targetLabel.Visible = false
+        end
     end
-
-    if trigConfig.Enabled and TriggerActive and (tick() - LastTriggerTime >= (trigConfig.Cooldown or 0.1)) then
+    
+    -- Triggerbot logic
+    if Config.Triggerbot.Enabled and TriggerActive and (tick() - LastTriggerTime >= Config.Triggerbot.Cooldown) then
         local mouse = LocalPlayer:GetMouse()
         local target = mouse.Target
         if target then
             local model = target:FindFirstAncestorOfClass("Model")
             local player = model and Players:GetPlayerFromCharacter(model)
             if player and player ~= LocalPlayer then
-                if trigConfig.TeamCheck and player.Team == LocalPlayer.Team then return end
-                if trigConfig.VisibilityCheck and not isVisible(target) then return end
-                if trigConfig.MaxDistance then
+                if Config.Triggerbot.TeamCheck and player.Team == LocalPlayer.Team then return end
+                if Config.Triggerbot.VisibilityCheck and not isVisible(target) then return end
+                if Config.Triggerbot.MaxDistance then
                     local dist = (Camera.CFrame.Position - target.Position).Magnitude
-                    if dist > trigConfig.MaxDistance then return end
+                    if dist > Config.Triggerbot.MaxDistance then return end
                 end
-                if math.random(1, 100) <= (trigConfig.HitChance or 100) then
+                if math.random(1, 100) <= Config.Triggerbot.HitChance then
                     mouse1press()
                     task.wait(0.05)
                     mouse1release()
@@ -215,20 +312,30 @@ RunService.RenderStepped:Connect(function()
             end
         end
     end
-
-    
 end
 
--- Silent Aim Hook
-getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
-    if silentConfig and silentConfig.Enabled and (SilentTarget or not silentConfig.StickyAim) and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
-        local target = silentConfig.StickyAim and SilentTarget or getClosestTarget(silentConfig.Checks, silentConfig.FOV)
-        if target and target.Character and target.Character:FindFirstChild(silentConfig.TargetPart or "Head") then
-            local part = target.Character[silentConfig.TargetPart or "Head"]
-            local predicted = part.Position + (part.Velocity * ((silentConfig.Prediction or 3.19) / 1000))
-            local resolved = applyResolver(predicted, part.Velocity)
-            return key == "Hit" and CFrame.new(resolved) or part
+-- Safe hook implementation
+local originalIndex
+originalIndex = hookmetamethod(game, "__index", newcclosure(function(obj, key)
+    if not Config.SilentAim.Enabled then
+        return originalIndex(obj, key)
+    end
+    
+    if obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
+        local target = Config.SilentAim.StickyAim and SilentTarget or getClosestTarget(Config.SilentAim.Checks, Config.SilentAim.FOV)
+        if target and target.Character then
+            local part = target.Character:FindFirstChild(Config.SilentAim.TargetPart)
+            if part then
+                local predicted = part.Position + (part.Velocity * (Config.SilentAim.Prediction / 1000))
+                local resolved = applyResolver(predicted, part.Velocity, Config.SilentAim.Resolver)
+                return key == "Hit" and CFrame.new(resolved) or part
+            end
         end
     end
-    return getgenv().OriginalIndex(obj, key)
-end)
+    return originalIndex(obj, key)
+end))
+
+-- Start the main loop
+RunService.RenderStepped:Connect(update)
+
+print("Script loaded successfully")
