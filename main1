@@ -169,7 +169,9 @@ removeJumpCooldown(LocalPlayer.Character)
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
     removeJumpCooldown(newCharacter)
 end)
-    for _, player in ipairs(Players:GetPlayers()) do
+
+-- Optional: you can move this block elsewhere if it's not needed immediately
+
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
             local part = player.Character.HumanoidRootPart
 
