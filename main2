@@ -216,7 +216,8 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    )
+    
+end
 
 -- Silent Aim Hook
 getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
