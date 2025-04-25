@@ -1,8 +1,9 @@
--- Finalized Aim Assist + Silent Aim Script with Full Feature Logic and Fixes
+-- Finalized Aim Assist + Silent Aim + Triggerbot Script with Full Feature Logic and Fixes
 
 local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
 local silentConfig = config and config.SilentAim
+local trigConfig = config and config.Triggerbot or {}
 
 -- Services
 local Players = game:GetService("Players")
@@ -46,6 +47,8 @@ local AimLocked = false
 local AimTarget = nil
 local SilentTarget = nil
 local HoldingAim = false
+local TriggerActive = false
+local LastTriggerTime = 0
 
 -- FOV Circle
 local fovCircle = Drawing.new("Circle")
@@ -147,6 +150,13 @@ UserInputService.InputBegan:Connect(function(input, gp)
         ResolverEnabled = not ResolverEnabled
         print("[Resolver] Toggled:", ResolverEnabled and "ENABLED" or "DISABLED")
     end
+    if input.KeyCode == (trigConfig.Keybind or Enum.KeyCode.T) then
+        if trigConfig.HoldToActivate then
+            TriggerActive = true
+        else
+            TriggerActive = not TriggerActive
+        end
+    end
 end)
 
 UserInputService.InputEnded:Connect(function(input, gp)
@@ -154,6 +164,9 @@ UserInputService.InputEnded:Connect(function(input, gp)
     if input.KeyCode == AimKey and AimHold then
         HoldingAim = false
         AimTarget = nil
+    end
+    if input.KeyCode == (trigConfig.Keybind or Enum.KeyCode.T) and trigConfig.HoldToActivate then
+        TriggerActive = false
     end
 end)
 
@@ -186,6 +199,29 @@ RunService.RenderStepped:Connect(function()
         targetLabel.Visible = true
     else
         targetLabel.Visible = false
+    end
+
+    if trigConfig.Enabled and TriggerActive and (tick() - LastTriggerTime >= (trigConfig.Cooldown or 0.1)) then
+        local mouse = LocalPlayer:GetMouse()
+        local target = mouse.Target
+        if target then
+            local model = target:FindFirstAncestorOfClass("Model")
+            local player = model and Players:GetPlayerFromCharacter(model)
+            if player and player ~= LocalPlayer then
+                if trigConfig.TeamCheck and player.Team == LocalPlayer.Team then return end
+                if trigConfig.VisibilityCheck and not isVisible(target) then return end
+                if trigConfig.MaxDistance then
+                    local dist = (Camera.CFrame.Position - target.Position).Magnitude
+                    if dist > trigConfig.MaxDistance then return end
+                end
+                if math.random(1, 100) <= (trigConfig.HitChance or 100) then
+                    mouse1press()
+                    task.wait(0.05)
+                    mouse1release()
+                    LastTriggerTime = tick()
+                end
+            end
+        end
     end
 end)
 
