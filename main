@@ -1,66 +1,77 @@
+-- Finalized Aim Assist + Silent Aim Script with Full Feature Logic and Fixes
+
 local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
 local silentConfig = config and config.SilentAim
 
-if not aimConfig or not aimConfig.Enabled then return end
-
---// Services
+-- Services
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
---// Aim Lock Config
-local Smoothness = aimConfig.smoothing or 0.00125
-local XShake = aimConfig.xshake or 0
-local YShake = aimConfig.yshake or 0
-local LockKey = aimConfig.Keybind or Enum.KeyCode.N
-local UseFov = aimConfig.UseFov or false
-local FovRadius = aimConfig.FOVRadius or 200
+-- Aim Assist Config
+local AimEnabled = aimConfig and aimConfig.Enabled
+local AimSmooth = aimConfig and aimConfig.smoothing or 0.00125
+local AimPart = aimConfig and aimConfig.AimPart or "HumanoidRootPart"
+local AimType = aimConfig and aimConfig.Type or "Camera"
+local AimFOV = aimConfig and aimConfig.FOV or 350
+local AimShowFOV = aimConfig and aimConfig.ShowFOV or false
+local AimKey = aimConfig and aimConfig.LockOnKey or Enum.KeyCode.C
+local AimHold = aimConfig and aimConfig.HoldBind or false
+local AimChecks = aimConfig and aimConfig.Checks or {}
+local XShake = aimConfig and aimConfig.xshake or 0
+local YShake = aimConfig and aimConfig.yshake or 0
 
 -- Resolver
-local ResolverMode = aimConfig.Resolver and aimConfig.Resolver.Type or "None"
-local ResolverEnabled = aimConfig.Resolver and aimConfig.Resolver.Enabled or false
-local ResolverToggleKey = aimConfig.Resolver and aimConfig.Resolver.Keybind or Enum.KeyCode.R
+local ResolverMode = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Type) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Type) or "None"
+local ResolverEnabled = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Enabled) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Enabled) or false
+local ResolverToggleKey = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Keybind) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Keybind) or Enum.KeyCode.R
 
 -- Silent Aim Config
-local SilentEnabled = silentConfig and silentConfig.Enabled or false
-local SilentPred = silentConfig and silentConfig.SilentPred or 3.19
-
--- Checks
-local Checks = aimConfig.Checks or {
-    Alive = true,
-    Team = true,
-    Visible = true
-}
+local SilentEnabled = silentConfig and silentConfig.Enabled
+local SilentKey = silentConfig and silentConfig.Keybind or Enum.KeyCode.M
+local SilentPred = silentConfig and silentConfig.Prediction or 3.19
+local SilentTargetPart = silentConfig and silentConfig.TargetPart or "Head"
+local SilentUseFov = silentConfig and silentConfig.UseFov or false
+local SilentFovRadius = silentConfig and silentConfig.FOV or 155
+local SilentSticky = silentConfig and silentConfig.StickyAim or false
+local SilentShowTarget = silentConfig and silentConfig.SilentTarget or false
+local SilentChecks = silentConfig and silentConfig.Checks or {}
 
 -- State
-local isLocked = false
-local lockTarget = nil
+local AimLocked = false
+local AimTarget = nil
+local SilentTarget = nil
+local HoldingAim = false
 
 -- FOV Circle
 local fovCircle = Drawing.new("Circle")
 fovCircle.Thickness = 1.5
 fovCircle.NumSides = 64
-fovCircle.Color = Color3.fromRGB(255, 255, 255)
 fovCircle.Filled = false
 fovCircle.Transparency = 0.75
-fovCircle.Visible = UseFov
-fovCircle.Radius = FovRadius
+fovCircle.Color = Color3.fromRGB(255, 255, 255)
+fovCircle.Visible = AimShowFOV or SilentUseFov
+fovCircle.Radius = math.max(AimFOV, SilentFovRadius)
+
+-- Target Label
+local targetLabel = Drawing.new("Text")
+targetLabel.Visible = false
+targetLabel.Size = 16
+targetLabel.Center = true
+targetLabel.Outline = true
+targetLabel.Color = Color3.fromRGB(255, 255, 255)
+targetLabel.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2 + 30)
 
 -- Utils
 local function isAlive(player)
     local char = player.Character
-    if not char then return false end
-
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-
-    local bodyEffects = char:FindFirstChild("BodyEffects")
-    local ko = bodyEffects and bodyEffects:FindFirstChild("K.O")
-    return not (ko and ko.Value)
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local ko = char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O")
+    return hum and hum.Health > 0 and (not ko or not ko.Value)
 end
 
 local function isVisible(part)
@@ -70,23 +81,22 @@ local function isVisible(part)
     local rayParams = RaycastParams.new()
     rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
     rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
     local result = Workspace:Raycast(origin, dir, rayParams)
     if not result then return true end
     return result.Instance:IsDescendantOf(part.Parent)
 end
 
-local function passesChecks(player)
+local function passesChecks(player, checks)
     if player == LocalPlayer or not player.Character then return false end
-    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-    if Checks.Alive and not isAlive(player) then return false end
-    if Checks.Team and player.Team == LocalPlayer.Team then return false end
-    if Checks.Visible and not isVisible(hrp) then return false end
+    local part = player.Character:FindFirstChild("HumanoidRootPart")
+    if not part then return false end
+    if checks.Alive and not isAlive(player) then return false end
+    if checks.Team and player.Team == LocalPlayer.Team then return false end
+    if checks.Visible and not isVisible(part) then return false end
     return true
 end
 
-local function applyResolver(player, pos, velocity)
+local function applyResolver(pos, velocity)
     if not ResolverEnabled or ResolverMode == "None" then return pos end
     local factor = 0.13
     if ResolverMode == "Aggressive" then factor *= 1.5
@@ -94,82 +104,102 @@ local function applyResolver(player, pos, velocity)
     return pos + (velocity * factor)
 end
 
-local function getClosestTarget()
+local function getClosestTarget(checks, radius)
     local closest, shortest = nil, math.huge
-    local mousePos = UserInputService:GetMouseLocation()
-
+    local mouse = UserInputService:GetMouseLocation()
     for _, player in ipairs(Players:GetPlayers()) do
-        if passesChecks(player) then
-            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-            local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-            if onScreen then
-                local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                if (not UseFov or dist <= FovRadius) and dist < shortest then
-                    shortest = dist
-                    closest = player
+        if passesChecks(player, checks) then
+            local part = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if part then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouse).Magnitude
+                    if (not radius or dist <= radius) and dist < shortest then
+                        closest = player
+                        shortest = dist
+                    end
                 end
             end
         end
     end
-
     return closest
 end
 
 -- Keybinds
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == LockKey then
-        isLocked = not isLocked
-        lockTarget = isLocked and getClosestTarget() or nil
+    if input.KeyCode == AimKey and AimEnabled then
+        if AimHold then
+            HoldingAim = true
+        else
+            AimLocked = not AimLocked
+            AimTarget = AimLocked and getClosestTarget(AimChecks, AimFOV) or nil
+        end
     end
-
+    if input.KeyCode == SilentKey and SilentEnabled then
+        if SilentSticky then
+            SilentTarget = SilentTarget and nil or getClosestTarget(SilentChecks, SilentFovRadius)
+        else
+            SilentTarget = nil
+        end
+    end
     if input.KeyCode == ResolverToggleKey then
         ResolverEnabled = not ResolverEnabled
         print("[Resolver] Toggled:", ResolverEnabled and "ENABLED" or "DISABLED")
     end
 end)
 
--- Aimlock Loop
+UserInputService.InputEnded:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == AimKey and AimHold then
+        HoldingAim = false
+        AimTarget = nil
+    end
+end)
+
+-- Render Loop
 RunService.RenderStepped:Connect(function()
-    fovCircle.Visible = UseFov
+    fovCircle.Visible = AimShowFOV or SilentUseFov
     fovCircle.Position = UserInputService:GetMouseLocation()
-    fovCircle.Radius = FovRadius
+    fovCircle.Radius = math.max(AimFOV, SilentFovRadius)
 
-    if isLocked and lockTarget and passesChecks(lockTarget) then
-        local hrp = lockTarget.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            local targetPos = applyResolver(lockTarget, hrp.Position, hrp.Velocity)
-            local camCF = Camera.CFrame
-            local targetCF = CFrame.lookAt(camCF.Position, targetPos)
-            Camera.CFrame = camCF:Lerp(targetCF, Smoothness)
-
-            if XShake > 0 or YShake > 0 then
-                local angleX = math.rad(math.random(-XShake, XShake))
-                local angleY = math.rad(math.random(-YShake, YShake))
-                Camera.CFrame = Camera.CFrame * CFrame.Angles(angleY, angleX, 0)
+    if (AimLocked or HoldingAim) and AimTarget and passesChecks(AimTarget, AimChecks) then
+        local targetPart = AimTarget.Character:FindFirstChild(AimPart)
+        if targetPart then
+            local pos = applyResolver(targetPart.Position, targetPart.Velocity)
+            if AimType == "Camera" then
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, pos), AimSmooth)
+                if XShake > 0 or YShake > 0 then
+                    local angleX = math.rad(math.random(-XShake, XShake))
+                    local angleY = math.rad(math.random(-YShake, YShake))
+                    Camera.CFrame *= CFrame.Angles(angleY, angleX, 0)
+                end
             end
         end
+    elseif HoldingAim then
+        AimTarget = getClosestTarget(AimChecks, AimFOV)
+    end
+
+    if SilentEnabled and SilentShowTarget and SilentTarget then
+        local name = SilentTarget.DisplayName ~= "" and SilentTarget.DisplayName or SilentTarget.Name
+        targetLabel.Text = "Locked: " .. name
+        targetLabel.Visible = true
+    else
+        targetLabel.Visible = false
     end
 end)
 
 -- Silent Aim Hook
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-    local args = {...}
-    local method = getnamecallmethod()
-
-    if SilentEnabled and tostring(self) == "MainEvent" and method == "FireServer" then
-        local target = getClosestTarget()
-        if target and target.Character then
-            local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local predicted = hrp.Position + (hrp.Velocity * SilentPred)
-                local resolved = applyResolver(target, predicted, hrp.Velocity)
-                args[2] = resolved
-                return oldNamecall(self, unpack(args))
-            end
+getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
+    if SilentEnabled and (SilentTarget or not SilentSticky) and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
+        local target = SilentSticky and SilentTarget or getClosestTarget(SilentChecks, SilentFovRadius)
+        if target and target.Character and target.Character:FindFirstChild(SilentTargetPart) then
+            local part = target.Character[SilentTargetPart]
+            local predicted = part.Position + (part.Velocity * (SilentPred / 1000))
+            local resolved = applyResolver(predicted, part.Velocity)
+            if key == "Hit" then return CFrame.new(resolved) end
+            if key == "Target" then return part end
         end
     end
-
-    return oldNamecall(self, ...)
+    return getgenv().OriginalIndex(obj, key)
 end)
