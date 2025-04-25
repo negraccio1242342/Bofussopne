@@ -1,9 +1,10 @@
--- Finalized Aim Assist + Silent Aim + Triggerbot Script with Full Feature Logic and Fixes
+-- Finalized Aim Assist + Silent Aim + Triggerbot + Hitbox Expander Script
 
 local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
 local silentConfig = config and config.SilentAim
 local trigConfig = config and config.Triggerbot or {}
+local hitboxConfig = config and config.HitboxExpander or {}
 
 -- Services
 local Players = game:GetService("Players")
@@ -69,7 +70,7 @@ targetLabel.Outline = true
 targetLabel.Color = Color3.fromRGB(255, 255, 255)
 targetLabel.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2 + 30)
 
--- Utils
+-- Utilities
 local function isAlive(player)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -128,7 +129,7 @@ local function getClosestTarget(checks, radius)
     return closest
 end
 
--- Keybinds
+-- Input
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == AimKey and AimEnabled then
@@ -170,7 +171,22 @@ UserInputService.InputEnded:Connect(function(input, gp)
     end
 end)
 
--- Render Loop
+-- Hitbox Expander Logic
+local function applyHitboxExpansion()
+    if not hitboxConfig.Enabled then return end
+    local size = hitboxConfig.size or Vector3.new(12, 12, 12)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local part = player.Character.HumanoidRootPart
+            part.Size = size
+            part.Transparency = hitboxConfig.visualize and 0.7 or 1
+            part.CanCollide = false
+            part.Massless = true
+        end
+    end
+end
+
+-- Main Render Loop
 RunService.RenderStepped:Connect(function()
     fovCircle.Visible = AimShowFOV or SilentUseFov
     fovCircle.Position = UserInputService:GetMouseLocation()
@@ -222,6 +238,10 @@ RunService.RenderStepped:Connect(function()
                 end
             end
         end
+    end
+
+    if hitboxConfig.Enabled then
+        applyHitboxExpansion()
     end
 end)
 
