@@ -26,9 +26,9 @@ local XShake = aimConfig and aimConfig.xshake or 0
 local YShake = aimConfig and aimConfig.yshake or 0
 
 -- Resolver
-local ResolverMode = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Type or "None"
-local ResolverEnabled = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Enabled or false
-local ResolverToggleKey = aimConfig and aimConfig.Resolver and aimConfig.Resolver.Keybind or Enum.KeyCode.R
+local ResolverMode = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Type) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Type) or "None"
+local ResolverEnabled = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Enabled) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Enabled) or false
+local ResolverToggleKey = (aimConfig and aimConfig.Resolver and aimConfig.Resolver.Keybind) or (silentConfig and silentConfig.Resolver and silentConfig.Resolver.Keybind) or Enum.KeyCode.R
 
 -- Silent Aim Config
 local SilentEnabled = silentConfig and silentConfig.Enabled
@@ -191,9 +191,10 @@ end)
 
 -- Silent Aim Hook
 getgenv().OriginalIndex = getgenv().OriginalIndex or hookmetamethod(game, "__index", function(obj, key)
-    if SilentEnabled and SilentTarget and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
-        local part = SilentTarget.Character and SilentTarget.Character:FindFirstChild(SilentTargetPart)
-        if part then
+    if SilentEnabled and (SilentTarget or not SilentSticky) and obj:IsA("Mouse") and (key == "Hit" or key == "Target") then
+        local target = SilentSticky and SilentTarget or getClosestTarget(SilentChecks, SilentFovRadius)
+        if target and target.Character and target.Character:FindFirstChild(SilentTargetPart) then
+            local part = target.Character[SilentTargetPart]
             local predicted = part.Position + (part.Velocity * (SilentPred / 1000))
             local resolved = applyResolver(predicted, part.Velocity)
             if key == "Hit" then return CFrame.new(resolved) end
