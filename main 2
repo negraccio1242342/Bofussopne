@@ -4,7 +4,17 @@ local config = getgenv().Script
 local aimConfig = config and config["Aim assist"]
 local silentConfig = config and config.SilentAim
 local trigConfig = config and config.Triggerbot or {}
-local hitboxConfig = config and config.HitboxExpander or {}
+local hitboxConfig = config and config.HitboxExpander or {
+    Enabled = false,
+    Visualize = false,
+    Scaling = {
+        Enabled = false,
+        X = 0,
+        Y = 0,
+        Z = 0
+    },
+    NormalSize = 0
+}
 
 -- Services
 local Players = game:GetService("Players")
@@ -141,14 +151,37 @@ end)
 -- Hitbox Expander
 local function applyHitboxExpansion()
     if not hitboxConfig.Enabled then return end
-    local size = hitboxConfig.size or Vector3.new(12, 12, 12)
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
             local part = player.Character.HumanoidRootPart
-            part.Size = size
-            part.Transparency = hitboxConfig.visualize and 0.5 or 1
+
+            if hitboxConfig.Scaling and hitboxConfig.Scaling.Enabled then
+                part.Size = Vector3.new(
+                    hitboxConfig.Scaling.X,
+                    hitboxConfig.Scaling.Y,
+                    hitboxConfig.Scaling.Z
+                )
+            else
+                part.Size = Vector3.new(
+                    hitboxConfig.NormalSize,
+                    hitboxConfig.NormalSize,
+                    hitboxConfig.NormalSize
+                )
+            end
+
+            part.Transparency = hitboxConfig.Visualize and 0.5 or 1
             part.CanCollide = false
             part.Massless = true
+
+            if hitboxConfig.Visualize then
+                local adorn = part:FindFirstChild("HitboxEdges") or Instance.new("SelectionBox")
+                adorn.Name = "HitboxEdges"
+                adorn.Adornee = part
+                adorn.LineThickness = 0.05
+                adorn.SurfaceColor3 = Color3.fromRGB(0, 0, 255)
+                adorn.SurfaceTransparency = 0.8
+                adorn.Parent = part
+            end
         end
     end
 end
